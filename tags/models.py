@@ -42,10 +42,17 @@ class Tag(models.Model):
     tag_collection = models.ForeignKey(TagCollection, on_delete=models.CASCADE, blank=True, null=True)
     subscribers = models.ManyToManyField(User, related_name="subscribers")
 
+class Comment(models.Model):
+    date = models.DateTimeField(auto_now_add=True, blank=True)
+    tag = models.ForeignKey(Tag, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, null=False, blank=False)
+    comment = models.CharField(max_length=500, default='')
+
 
 class Vote(models.Model):
     date = models.DateTimeField(auto_now_add=True, blank=True)
-    tag = models.ForeignKey(Tag, on_delete=models.CASCADE) # one valuetag to many votes
+    tag = models.ForeignKey(Tag, on_delete=models.CASCADE, null=True, blank=True) # one valuetag to many votes
+    comment = models.ForeignKey(Comment, on_delete=models.CASCADE, null=True, blank=True)
     voter = models.ForeignKey(User, null=False, blank=False) 
 
 

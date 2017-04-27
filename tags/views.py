@@ -9,10 +9,11 @@ from django.contrib.auth.decorators import login_required
 from annoying.decorators import ajax_request
 from urlparse import urlparse
 from common.templatetags.gravatar import gravatar_for_user
+from dateutil import tz
 
 from api.models import Domain, Page
 from tags.models import Highlight, CommonTag, TagCollection
-from tags.models import Tag, Vote, UserTagInfo
+from tags.models import Tag, Vote, UserTagInfo, Comment
 from accounts.models import UserProfile
 
 '''
@@ -281,8 +282,11 @@ def initialize_page(request):
 
       # Add page
       try:
-        page = Page(url=url, domain=d, title=title)
-        page.save()
+        if len(Page.objects.filter(url=url, domain=d, title=title)) == 0:
+          page = Page(url=url, domain=d, title=title)
+          page.save()
+        else:
+          page = Page.objects.get(url=url, domain=d, title=title)
       except:
         errors['add_page'].append("Could not create page")
         count_tags = False
@@ -437,22 +441,31 @@ def highlight(request):
   errors = {}
   data = {}
 
+  print "here0"
+
   if request.POST:
     url = process_url(request.POST.get('url'))
     highlight = request.POST.get('highlight')
     tags = json.loads(request.POST.get('tags'))
     errors['add_highlight'] = []
+    print "HEREEEE"
+
+    print highlight
 
     if not len(errors['add_highlight']) and highlight != "":
       p = Page.objects.get(url=url)
+      print p
 
       try:
         h = Highlight.objects.get(page=p, highlight=highlight)
+        print h
       except:
         h = Highlight(page=p, highlight=highlight)
         h.save()
+        print h
 
       for tag in tags:
+        print tag
         if len(Tag.objects.filter(highlight=h, common_tag__name=tag)) == 0:
           try:
             common_tag = CommonTag.objects.get(name=tag)
@@ -504,6 +517,7 @@ def highlights(request):
             max_tag = (vt.common_tag.name, vt.common_tag.color)
         highlights[h.highlight] = max_tag
       success = True
+      print "hereeee!!"
 
   return {
     'success': success,
@@ -625,6 +639,166 @@ def common_tags(request):
     'success': success,
     'errors': errors,
     'common_tags': common_tags,
+  }
+
+
+@login_required
+@ajax_request
+def add_comment(request):
+  success = False
+  user = request.user
+  errors = {}
+  comment = {}
+
+  if request.POST:
+    url = process_url(request.POST.get('url'))
+    highlight = request.POST.get('highlight')
+    tag_name = request.POST.get('tag_name')
+    comment = request.POST.get('comment')
+    errors['add_comment'] = []
+    t = None
+
+    try:
+      t = Tag.objects.get(highlight__highlight=highlight, common_tag__name=tag_name, page__url=url)
+    except:
+      errors['add_comment'].append("Could not get tag " + tag_name)
+
+    if t:
+      c = Comment(tag=t, user=user, comment=comment)
+      c.save()
+
+      v = Vote(comment=c, voter=user)
+      v.save()
+
+      from_zone = tz.tzutc()
+      to_zone = tz.tzlocal()
+
+      date = c.date.replace(tzinfo=from_zone)
+      local = date.astimezone(to_zone)
+
+      user_profile = UserProfile.objects.get(user=user)
+      pic = user_profile.pic_url
+
+      if not pic:
+        pic = gravatar_for_user(user)
+
+      comment = {
+        'comment': c.comment,
+        'date': local.strftime('%b %m, %Y,  %I:%M %p'),
+        'user': c.user.username,
+        'prof_pic': pic,
+        'id': c.id,
+      }
+
+      print comment
+
+      success = True
+
+  return {
+    'success': success,
+    'errors': errors,
+    'comment': comment,
+  }
+
+@login_required
+@ajax_request
+def remove_comment(request):
+  success = False
+  user = request.user
+  errors = {}
+
+  if request.POST:
+    url = process_url(request.POST.get('url'))
+    comment = request.POST.get('comment')
+    errors['remove_comment'] = []
+
+    try:
+      c = Comment.objects.get(tag__page__url=url, comment=comment, user=user)
+      c.delete()
+      success = True
+    except:
+      errors['remove_comment'].append("Could not get comment " + comment)
+
+  return {
+    'success': success,
+    'errors': errors,
+  }
+
+@login_required
+@ajax_request
+def edit_comment(request):
+  success = False
+  user = request.user
+  errors = {}
+
+  if request.POST:
+    comment_id = request.POST.get('comment_id')
+    new_comment = request.POST.get('new_comment')
+    errors['edit_comment'] = []
+
+    try:
+      c = Comment.objects.get(id=comment_id)
+      c.comment = new_comment
+      c.save()
+      success = True
+    except:
+      errors['edit_comment'].append("Could not get comment " + comment)
+
+  return {
+    'success': success,
+    'errors': errors,
+  }
+
+@login_required
+@ajax_request
+def comments(request):
+  success = False
+  errors = {}
+  data = {}
+
+  if request.GET:
+    url = process_url(request.GET.get('url'))
+    highlight = request.GET.get('highlight')
+    tag_name = request.GET.get('tag_name')
+    errors['comments'] = []
+    comments = []
+
+    try:
+      cs = Comment.objects.filter(tag__page__url=url, tag__common_tag__name=tag_name).order_by('date')
+
+      for c in cs:
+        from_zone = tz.tzutc()
+        to_zone = tz.tzlocal()
+
+        date = c.date.replace(tzinfo=from_zone)
+        local = date.astimezone(to_zone)
+
+        user_profile = UserProfile.objects.get(user=c.user)
+        pic = user_profile.pic_url
+
+        if not pic:
+          pic = gravatar_for_user(c.user)
+
+        print pic
+
+        comments.append({
+          'comment': c.comment,
+          'date': local.strftime('%b %m, %Y,  %I:%M %p'),
+          'user': c.user.username,
+          'prof_pic': pic,
+          'id': c.id,
+        })
+
+      data['comments'] = comments
+      success = True
+
+    except:
+      errors['comments'].append("Could not get comments for tag " + tag_name)
+
+  return {
+    'success': success,
+    'errors': errors,
+    'data': data,
   }
 
 
